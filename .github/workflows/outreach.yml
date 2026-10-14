@@ -12,6 +12,10 @@ on:
         description: "Optional: send only one sample, to this address"
         required: false
         default: ""
+      status_for:
+        description: "Optional: send nothing, just show Brevo delivery events for this address"
+        required: false
+        default: ""
 
 concurrency: { group: outreach, cancel-in-progress: false }
 
@@ -29,7 +33,15 @@ jobs:
           backup-key: ${{ secrets.VAPID_PRIVATE_KEY }}
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - name: Delivery status
+        if: inputs.status_for != ''
+        working-directory: core
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          ADDR: ${{ inputs.status_for }}
+        run: node outreach/status.mjs "$ADDR"
       - name: Send
+        if: inputs.status_for == ''
         working-directory: core
         env:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}

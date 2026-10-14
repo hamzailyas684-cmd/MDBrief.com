@@ -1,0 +1,39 @@
+name: Send outreach
+
+# Run by hand. Sends the intro email to one batch from mdbrief-core/outreach/batches/<batch>.csv through Brevo,
+# so links stay plain mdbrief.org links (no Google "Redirect Notice"). Opted-out addresses are skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Batch name (file in outreach/batches, without .csv)"
+        required: true
+      test_to:
+        description: "Optional: send only one sample, to this address"
+        required: false
+        default: ""
+
+concurrency: { group: outreach, cancel-in-progress: false }
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get MDBrief's code (private, with encrypted backup)
+        id: core
+        uses: ./.github/actions/get-core
+        with:
+          core-token: ${{ secrets.CORE_TOKEN }}
+          backup-key: ${{ secrets.VAPID_PRIVATE_KEY }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Send
+        working-directory: core
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BATCH: ${{ inputs.batch }}
+          TEST_TO: ${{ inputs.test_to }}
+        run: node outreach/send.mjs "$BATCH" "$TEST_TO"

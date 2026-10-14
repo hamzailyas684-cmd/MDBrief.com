@@ -1,0 +1,58 @@
+name: 5 pm notifications
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # every hour; each device gets its update at about 5 pm in its own time zone
+  workflow_dispatch:
+    inputs:
+      send_now:
+        description: "Send everyone today's update right now (for testing)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: notifications
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core.
+      # This public repository only holds these workflows; each run fetches the code with the CORE_TOKEN secret.
+      - name: Get MDBrief's code (private)
+        id: core
+        env:
+          CORE_TOKEN: ${{ secrets.CORE_TOKEN }}
+        run: |
+          if [ -n "$CORE_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core
+            rm -rf core/.git
+          fi
+          if [ -f core/index.html ]; then
+            echo "from=private" >> "$GITHUB_OUTPUT"
+          elif [ -f index.html ]; then
+            echo "::warning::The private code was not available yet, so this run used the copy of the code in this repository."
+            rm -rf core && mkdir core && cp -r $(ls -A | grep -v '^core$' | grep -v '^.git$') core/
+            echo "from=public" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::CORE_TOKEN secret is missing or no longer valid, so MDBrief's private code could not be fetched."; exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        working-directory: core
+        run: npm install --no-save --no-audit --no-fund --prefix notify web-push@3.6.7 jsdom@26.1.0
+      - name: Send notifications
+        working-directory: core
+        run: node notify/send.mjs
+        env:
+          SEND_NOW: ${{ inputs.send_now }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          APNS_KEY: ${{ secrets.APNS_KEY }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}

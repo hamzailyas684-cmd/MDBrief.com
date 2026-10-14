@@ -1,0 +1,103 @@
+name: Collect papers and publish site
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch:
+    inputs:
+      fast:
+        description: "Code change only: reuse today's paper lists instead of collecting again"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      collect: ${{ steps.collect.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core.
+      # This public repository only holds these workflows; each run fetches the code with the CORE_TOKEN secret.
+      - name: Get MDBrief's code (private)
+        id: core
+        env:
+          CORE_TOKEN: ${{ secrets.CORE_TOKEN }}
+        run: |
+          if [ -n "$CORE_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core
+            rm -rf core/.git
+          fi
+          if [ -f core/index.html ]; then
+            echo "from=private" >> "$GITHUB_OUTPUT"
+          elif [ -f index.html ]; then
+            echo "::warning::The private code was not available yet, so this run used the copy of the code in this repository."
+            rm -rf core && mkdir core && cp -r $(ls -A | grep -v '^core$' | grep -v '^.git$') core/
+            echo "from=public" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::CORE_TOKEN secret is missing or no longer valid, so MDBrief's private code could not be fetched."; exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Copy the website
+        working-directory: core
+        run: |
+          mkdir -p _site
+          cp index.html sw.js manifest.webmanifest logo.png icon-192.png icon-512.png icon-maskable-512.png apple-touch-icon.png email-icon.png og-image.png sitemap.xml unsubscribe.html CNAME robots.txt _site/
+          touch _site/.nojekyll
+      - name: Install
+        working-directory: core
+        run: npm install --no-save --no-audit --no-fund --prefix build jsdom@26.1.0
+      - name: Reuse current paper lists (code changes go live fast)
+        id: reuse
+        if: github.event_name == 'push' || inputs.fast
+        continue-on-error: true
+        working-directory: core
+        run: node build/reuse.mjs _site
+      - name: Collect every specialty's papers
+        id: collect
+        if: (github.event_name != 'push' && !inputs.fast) || steps.reuse.outcome != 'success'
+        continue-on-error: true
+        working-directory: core
+        run: node build/snapshot.mjs _site
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: core/_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  # If collecting papers or publishing failed, this job fails, and GitHub emails the account that started the run.
+  check:
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report problems
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ]; then echo "::error::The build failed (for example, the private code could not be fetched)."; exit 1; fi
+          if [ "${{ needs.build.outputs.collect }}" = "failure" ]; then echo "::error::Collecting papers failed. See the 'Collect every specialty's papers' step."; exit 1; fi
+          if [ "${{ needs.deploy.result }}" != "success" ]; then echo "::error::Publishing the site failed."; exit 1; fi
+          echo "All good"

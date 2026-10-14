@@ -1,0 +1,46 @@
+name: Opt-out list
+
+# Run by hand before sending outreach emails. Prints the opt-out list encrypted; nothing readable appears in the logs.
+on:
+  workflow_dispatch:
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core.
+      # This public repository only holds these workflows; each run fetches the code with the CORE_TOKEN secret.
+      - name: Get MDBrief's code (private)
+        id: core
+        env:
+          CORE_TOKEN: ${{ secrets.CORE_TOKEN }}
+        run: |
+          if [ -n "$CORE_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core
+            rm -rf core/.git
+          fi
+          if [ -f core/index.html ]; then
+            echo "from=private" >> "$GITHUB_OUTPUT"
+          elif [ -f index.html ]; then
+            echo "::warning::The private code was not available yet, so this run used the copy of the code in this repository."
+            rm -rf core && mkdir core && cp -r $(ls -A | grep -v '^core$' | grep -v '^.git$') core/
+            echo "from=public" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::CORE_TOKEN secret is missing or no longer valid, so MDBrief's private code could not be fetched."; exit 1
+          fi
+      - name: Read and encrypt the opt-out list
+        working-directory: core
+        env:
+          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          KEY=$(printf '%s' "$KEY" | tr -d '[:space:]')
+          URL=$(grep -o 'const NOTIFY_DB_URL = "[^"]*"' index.html | cut -d'"' -f2)
+          AUTH=()
+          case "$KEY" in sb_*) ;; *) AUTH=(-H "Authorization: Bearer $KEY");; esac
+          curl -fsS "$URL/rest/v1/optouts?select=email,created_at&order=created_at" -H "apikey: $KEY" "${AUTH[@]}" > list.json
+          N=$(python3 -c "import json;print(len(json.load(open('list.json'))))")
+          openssl cms -encrypt -binary -aes256 -in list.json -outform DER notify/optout-cert.pem | base64 -w0 > enc.txt
+          echo "::notice title=OPTOUTS ${N}::$(cat enc.txt)"

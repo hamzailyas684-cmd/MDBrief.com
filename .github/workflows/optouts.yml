@@ -10,26 +10,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core.
-      # This public repository only holds these workflows; each run fetches the code with the CORE_TOKEN secret.
-      - name: Get MDBrief's code (private)
+      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core (fetched with CORE_TOKEN).
+      # If that ever fails, the encrypted backup on this repo's "backup" branch is used instead, so nothing stops.
+      - name: Get MDBrief's code (private, with encrypted backup)
         id: core
-        env:
-          CORE_TOKEN: ${{ secrets.CORE_TOKEN }}
-        run: |
-          if [ -n "$CORE_TOKEN" ]; then
-            git clone --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core
-            rm -rf core/.git
-          fi
-          if [ -f core/index.html ]; then
-            echo "from=private" >> "$GITHUB_OUTPUT"
-          elif [ -f index.html ]; then
-            echo "::warning::The private code was not available yet, so this run used the copy of the code in this repository."
-            rm -rf core && mkdir core && cp -r $(ls -A | grep -v '^core$' | grep -v '^.git$') core/
-            echo "from=public" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::CORE_TOKEN secret is missing or no longer valid, so MDBrief's private code could not be fetched."; exit 1
-          fi
+        uses: ./.github/actions/get-core
+        with:
+          core-token: ${{ secrets.CORE_TOKEN }}
+          backup-key: ${{ secrets.VAPID_PRIVATE_KEY }}
       - name: Read and encrypt the opt-out list
         working-directory: core
         env:

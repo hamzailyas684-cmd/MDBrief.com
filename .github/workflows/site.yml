@@ -13,7 +13,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write   # only used to update the encrypted backup branch
   pages: write
   id-token: write
 
@@ -27,28 +27,25 @@ jobs:
     timeout-minutes: 25
     outputs:
       collect: ${{ steps.collect.outcome }}
+      from: ${{ steps.core.outputs.from }}
     steps:
       - uses: actions/checkout@v4
-      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core.
-      # This public repository only holds these workflows; each run fetches the code with the CORE_TOKEN secret.
-      - name: Get MDBrief's code (private)
+      # MDBrief's code lives in the private repository hamzailyas684-cmd/mdbrief-core (fetched with CORE_TOKEN).
+      # If that ever fails, the encrypted backup on this repo's "backup" branch is used instead, so nothing stops.
+      - name: Get MDBrief's code (private, with encrypted backup)
         id: core
-        env:
-          CORE_TOKEN: ${{ secrets.CORE_TOKEN }}
-        run: |
-          if [ -n "$CORE_TOKEN" ]; then
-            git clone --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core
-            rm -rf core/.git
-          fi
-          if [ -f core/index.html ]; then
-            echo "from=private" >> "$GITHUB_OUTPUT"
-          elif [ -f index.html ]; then
-            echo "::warning::The private code was not available yet, so this run used the copy of the code in this repository."
-            rm -rf core && mkdir core && cp -r $(ls -A | grep -v '^core$' | grep -v '^.git$') core/
-            echo "from=public" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::CORE_TOKEN secret is missing or no longer valid, so MDBrief's private code could not be fetched."; exit 1
-          fi
+        uses: ./.github/actions/get-core
+        with:
+          core-token: ${{ secrets.CORE_TOKEN }}
+          backup-key: ${{ secrets.VAPID_PRIVATE_KEY }}
+      - name: Keep the encrypted backup up to date
+        if: steps.core.outputs.from == 'private'
+        continue-on-error: true
+        uses: ./.github/actions/save-backup
+        with:
+          backup-key: ${{ secrets.VAPID_PRIVATE_KEY }}
+          hash: ${{ steps.core.outputs.hash }}
+          token: ${{ github.token }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -100,4 +97,6 @@ jobs:
           if [ "${{ needs.build.result }}" != "success" ]; then echo "::error::The build failed (for example, the private code could not be fetched)."; exit 1; fi
           if [ "${{ needs.build.outputs.collect }}" = "failure" ]; then echo "::error::Collecting papers failed. See the 'Collect every specialty's papers' step."; exit 1; fi
           if [ "${{ needs.deploy.result }}" != "success" ]; then echo "::error::Publishing the site failed."; exit 1; fi
+          # Running on the backup copy keeps everything working; send one reminder a day (via a failed check) to renew the key.
+          if [ "${{ needs.build.outputs.from }}" = "backup" ] && [ "$(date -u +%H)" = "12" ] && [ "$(date -u +%M)" -lt 30 ]; then echo "::error::MDBrief is running from its encrypted backup because CORE_TOKEN no longer works. Everything still runs, but please make a new key and update the CORE_TOKEN secret."; exit 1; fi
           echo "All good"

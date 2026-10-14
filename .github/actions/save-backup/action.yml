@@ -1,0 +1,27 @@
+name: Save encrypted backup
+description: Keeps an encrypted copy of the private code on the "backup" branch (only when the code or key changed).
+inputs:
+  backup-key: { description: Secret used to encrypt the backup, required: false }
+  hash: { description: Fingerprint of the code in ./core, required: true }
+  token: { description: GITHUB_TOKEN, required: true }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BK: ${{ inputs.backup-key }}
+        H: ${{ inputs.hash }}
+        GT: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        if [ -z "$BK" ]; then echo "::warning::No backup key, so no backup was saved."; exit 0; fi
+        KID=$(printf '%s' "$BK" | sha256sum | cut -c1-16)
+        OLD=""; OLDK=""
+        if git fetch -q --depth 1 origin backup 2>/dev/null; then OLD=$(git show FETCH_HEAD:core.sha 2>/dev/null || true); OLDK=$(git show FETCH_HEAD:key.id 2>/dev/null || true); fi
+        if [ "$OLD" = "$H" ] && [ "$OLDK" = "$KID" ]; then echo "Backup is up to date."; exit 0; fi
+        rm -rf /tmp/bk && mkdir /tmp/bk
+        tar --exclude=node_modules --exclude=_site -czf - -C core . | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BK -out /tmp/bk/core.tar.gz.enc
+        printf '%s' "$H" > /tmp/bk/core.sha; printf '%s' "$KID" > /tmp/bk/key.id
+        printf 'Encrypted backup of MDBrief'"'"'s private code, used automatically only if the private repository cannot be reached.\n' > /tmp/bk/README.md
+        cd /tmp/bk && git init -q -b backup && git add -A && git -c user.name="mdbrief-bot" -c user.email="hello@mdbrief.org" commit -qm "Encrypted backup" \
+          && git push -qf "https://x-access-token:${GT}@github.com/${GITHUB_REPOSITORY}.git" backup && echo "Backup saved."

@@ -1,0 +1,39 @@
+name: Get MDBrief's code
+description: >
+  Fetches MDBrief's code from the private repository hamzailyas684-cmd/mdbrief-core into ./core.
+  If that fails (for example the CORE_TOKEN key expired), it falls back to the encrypted backup kept on
+  this repository's "backup" branch, so the site and alerts keep working. The backup can only be
+  decrypted with the BACKUP_KEY secret (the VAPID private key), so the code stays private either way.
+inputs:
+  core-token: { description: CORE_TOKEN secret, required: false }
+  backup-key: { description: Secret used to encrypt/decrypt the backup, required: false }
+outputs:
+  from: { description: "private | backup", value: "${{ steps.get.outputs.from }}" }
+  hash: { description: Fingerprint of the code, value: "${{ steps.get.outputs.hash }}" }
+runs:
+  using: composite
+  steps:
+    - id: get
+      shell: bash
+      env:
+        CORE_TOKEN: ${{ inputs.core-token }}
+        BK: ${{ inputs.backup-key }}
+      run: |
+        set -uo pipefail
+        rm -rf core
+        if [ -n "$CORE_TOKEN" ] && git clone -q --depth 1 "https://x-access-token:${CORE_TOKEN}@github.com/hamzailyas684-cmd/mdbrief-core.git" core 2>/dev/null && [ -f core/index.html ]; then
+          rm -rf core/.git
+          echo "from=private" >> "$GITHUB_OUTPUT"
+        else
+          rm -rf core
+          echo "::warning title=Using the backup copy::Could not fetch MDBrief's private code (the CORE_TOKEN key may have expired). Running from the encrypted backup instead. Make a new key and update the CORE_TOKEN secret."
+          if [ -n "$BK" ] && git fetch -q --depth 1 origin backup && git show FETCH_HEAD:core.tar.gz.enc > /tmp/core.enc \
+             && mkdir core && openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BK -in /tmp/core.enc | tar -xz -C core && [ -f core/index.html ]; then
+            echo "from=backup" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Neither the private code nor the backup could be loaded. mdbrief.org stays up with its last version; papers will not update until CORE_TOKEN is fixed."
+            exit 1
+          fi
+        fi
+        H=$(cd core && find . -type f -not -path '*/node_modules/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)
+        echo "hash=$H" >> "$GITHUB_OUTPUT"

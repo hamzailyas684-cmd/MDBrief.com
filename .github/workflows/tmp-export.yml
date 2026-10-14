@@ -1,0 +1,15 @@
+name: Temporary data export
+on: { workflow_dispatch: }
+permissions: { contents: write }
+jobs:
+  e:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir d && cd d
+          for f in index.json links.json; do curl -fsS "https://mdbrief.org/data/$f" -o "$f" || true; done
+          curl -fsS https://mdbrief.org/index.html -o site.html
+          for id in $(grep -o '{g:"[^"]*",id:"[a-z]*"' site.html | sed 's/.*id:"//;s/"//'); do curl -fsS "https://mdbrief.org/data/$id.json" -o "$id.json" || true; done
+          rm site.html; ls | wc -l
+          git init -q -b tmp-data && git add -A && git -c user.name=bot -c user.email=bot@mdbrief.org commit -qm data
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" tmp-data

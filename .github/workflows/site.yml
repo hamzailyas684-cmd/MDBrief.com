@@ -57,7 +57,7 @@ jobs:
           touch _site/.nojekyll
       - name: Install
         working-directory: core
-        run: npm install --no-save --no-audit --no-fund --prefix build jsdom@26.1.0
+        run: npm install --no-save --no-audit --no-fund --prefix build jsdom@26.1.0 esbuild@0.24.2
       - name: Reuse current paper lists (code changes go live fast)
         id: reuse
         if: github.event_name == 'push' || inputs.fast
@@ -72,6 +72,10 @@ jobs:
         run: node build/snapshot.mjs _site
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+      - name: Slim the public copy (strip comments, drop run logs)
+        continue-on-error: true
+        working-directory: core
+        run: node build/finish.mjs _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: core/_site

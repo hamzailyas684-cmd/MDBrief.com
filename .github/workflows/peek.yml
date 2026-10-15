@@ -1,0 +1,13 @@
+name: Copy live data for a check (temporary)
+on: workflow_dispatch
+permissions: { contents: write }
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir d && cd d
+          for s in ortho cardio gi neuro onco pulm peds general rad surg; do curl -sf "https://mdbrief.org/data/$s.json" -o $s.json || true; done
+          curl -sf "https://mdbrief.org/index.html" -o index.html || true
+          git init -q && git checkout -q -b peek && git add . && git -c user.name=bot -c user.email=bot@x commit -qm peek
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" peek

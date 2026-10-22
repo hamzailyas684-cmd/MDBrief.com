@@ -85,9 +85,17 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     steps:
+      # GitHub's publishing service sometimes fails for a moment (e.g. "Ensure GITHUB_TOKEN has permission id-token: write"
+      # even though it has it). Try once more after 30 seconds before reporting a problem.
       - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+      - id: retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
 
   # If collecting papers or publishing failed, this job fails, and GitHub emails the account that started the run.

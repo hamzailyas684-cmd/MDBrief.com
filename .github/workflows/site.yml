@@ -106,6 +106,8 @@ jobs:
     steps:
       - name: Report problems
         run: |
+          # A run that was pushed aside by a newer run (two starts at the same moment) is not a failure.
+          case "${{ needs.build.result }}" in cancelled|abandoned|skipped) echo "A newer run took over; nothing to report."; exit 0;; esac
           if [ "${{ needs.build.result }}" != "success" ]; then echo "::error::The build failed (for example, the private code could not be fetched)."; exit 1; fi
           if [ "${{ needs.build.outputs.collect }}" = "failure" ]; then echo "::error::Collecting papers failed. See the 'Collect every specialty's papers' step."; exit 1; fi
           if [ "${{ needs.deploy.result }}" != "success" ]; then echo "::error::Publishing the site failed."; exit 1; fi
